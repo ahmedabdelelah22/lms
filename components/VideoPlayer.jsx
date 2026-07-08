@@ -12,44 +12,53 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showMobileControls, setShowMobileControls] = useState(false);
-  const playerRef = useRef(null);
+  
+  const containerRef = useRef(null); // الـ ref الخاص بالـ div للكمبيوتر والـ Wide Mode
+  const videoRef = useRef(null);     // الـ ref الخاص بالفيديو الحقيقي لحل مشكلة الموبايل والآيفون
   const controlsTimeoutRef = useRef(null);
  
-  // ✅ FIX 1: Better fullscreen state detection
+  // فحص حالة الفل سكرين من المتصفح
   const checkFullscreenStatus = () => {
-    const isFS =
+    return !!(
       document.fullscreenElement ||
       document.webkitFullscreenElement ||
       document.mozFullScreenElement ||
-      document.msFullscreenElement;
-    
-    return !!isFS;
+      document.msFullscreenElement ||
+      videoRef.current?.webkitDisplayingFullscreen // إضافة فحص خاص بآيفون
+    );
   };
  
-  // ✅ FIX 2: Improved fullscreen change detection with better handlers
   useEffect(() => {
     const handleFullscreenChange = () => {
-      const isFS = checkFullscreenStatus();
-      setIsFullscreen(isFS);
-      console.log("Fullscreen status changed:", isFS);
+      setIsFullscreen(checkFullscreenStatus());
     };
  
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
     document.addEventListener("mozfullscreenchange", handleFullscreenChange);
     document.addEventListener("msfullscreenchange", handleFullscreenChange);
+    
+    // مستمع خاص لهواتف iOS
+    const videoElem = videoRef.current;
+    if (videoElem) {
+      videoElem.addEventListener("webkitbeginfullscreen", () => setIsFullscreen(true));
+      videoElem.addEventListener("webkitendfullscreen", () => setIsFullscreen(false));
+    }
  
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
       document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
       document.removeEventListener("msfullscreenchange", handleFullscreenChange);
+      if (videoElem) {
+        videoElem.removeEventListener("webkitbeginfullscreen", () => setIsFullscreen(true));
+        videoElem.removeEventListener("webkitendfullscreen", () => setIsFullscreen(false));
+      }
     };
   }, []);
  
-  // ✅ FIX 3: Improved click handler - prevent event bubbling
+  // التعامل مع النقر على الهاتف لإظهار عناصر التحكم
   const handlePlayerTap = (e) => {
-    // Don't toggle controls if clicking on buttons
     if (e.target.closest("button") || e.target.closest(".cursor-pointer")) {
       return;
     }
@@ -63,72 +72,51 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
     }, 3500);
   };
  
-  useEffect(() => {
-    return () => {
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    };
-  }, []);
- 
-  // ✅ FIX 4: Improved fullscreen toggle with better error handling
+  // دالة تشغيل وإيقاف الفل سكرين التفاعلية للموبايل والكمبيوتر
   const toggleFullscreen = async (e) => {
-    // ✅ Stop event propagation to prevent tap handler from firing
     e?.stopPropagation();
  
-    if (!playerRef.current) {
-      console.error("Player ref not found");
+    // تحديد العنصر المستهدف: إذا كان هاتفاً نختار الـ <video> مباشرة، وإذا كان كمبيوتراً نختار الـ <div> الحاضن
+    const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const targetElement = isMobileDevice ? videoRef.current : containerRef.current;
+ 
+    if (!targetElement) {
+      console.error("Target element for fullscreen not found");
       return;
     }
  
     try {
       if (!isFullscreen) {
-        // Entering fullscreen
-        console.log("Attempting to enter fullscreen");
- 
-        // Try standard API first
-        if (playerRef.current.requestFullscreen) {
-          await playerRef.current.requestFullscreen();
-        }
-        // Webkit (Chrome, Safari, Edge)
-        else if (playerRef.current.webkitRequestFullscreen) {
-          await playerRef.current.webkitRequestFullscreen();
-        }
-        // Firefox
-        else if (playerRef.current.mozRequestFullScreen) {
-          await playerRef.current.mozRequestFullScreen();
-        }
-        // IE/Edge
-        else if (playerRef.current.msRequestFullscreen) {
-          await playerRef.current.msRequestFullscreen();
-        }
-        // iOS Safari specific
-        else if (playerRef.current.webkitEnterFullscreen) {
-          playerRef.current.webkitEnterFullscreen();
-        }
-        else {
-          console.warn("Fullscreen API not supported on this device");
+        // ── Entering Fullscreen ──
+        
+        // حل خاص وحصري لهواتف الآيفون (iOS Safari)
+        if (isMobileDevice && videoRef.current?.webkitEnterFullscreen) {
+          videoRef.current.webkitEnterFullscreen();
+          setIsFullscreen(true);
           return;
         }
  
-        // Try to lock orientation on mobile
+        // المتصفحات القياسية الأخرى (Android Chrome, Desktop)
+        if (targetElement.requestFullscreen) {
+          await targetElement.requestFullscreen();
+        } else if (targetElement.webkitRequestFullscreen) {
+          await targetElement.webkitRequestFullscreen();
+        } else if (targetElement.mozRequestFullScreen) {
+          await targetElement.mozRequestFullScreen();
+        } else if (targetElement.msRequestFullscreen) {
+          await targetElement.msRequestFullscreen();
+        }
+ 
+        // محاولة إجبار الشاشة على الدوران العرضي (Landscape) في الموبايل
         try {
           if (window.screen?.orientation?.lock) {
             await window.screen.orientation.lock("landscape");
           }
-        } catch (orientationError) {
-          console.log("Could not lock orientation:", orientationError);
+        } catch (err) {
+          console.log("Orientation lock setup ignored:", err);
         }
- 
-        // Manually update state if API doesn't trigger event
-        setTimeout(() => {
-          const isFS = checkFullscreenStatus();
-          if (!isFS) {
-            setIsFullscreen(true);
-          }
-        }, 100);
       } else {
-        // Exiting fullscreen
-        console.log("Attempting to exit fullscreen");
- 
+        // ── Exiting Fullscreen ──
         if (document.exitFullscreen) {
           await document.exitFullscreen();
         } else if (document.webkitExitFullscreen) {
@@ -143,31 +131,31 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
           if (window.screen?.orientation?.unlock) {
             await window.screen.orientation.unlock();
           }
-        } catch (orientationError) {
-          console.log("Could not unlock orientation:", orientationError);
+        } catch (err) {
+          console.log("Orientation unlock setup ignored:", err);
         }
- 
-        // Manually update state if API doesn't trigger event
-        setTimeout(() => {
-          const isFS = checkFullscreenStatus();
-          if (isFS) {
-            setIsFullscreen(false);
-          }
-        }, 100);
       }
     } catch (error) {
-      console.error("Fullscreen toggle error:", error);
+      console.error("Fullscreen Error:", error);
     }
   };
  
   const renderPlayerContent = (isWideLayout) => (
     <div
-      ref={playerRef}
+      ref={containerRef}
       onClick={handlePlayerTap}
       className={`relative bg-gray-900 overflow-hidden aspect-video shadow-lg group mx-auto w-full select-none ${
         isWideLayout ? "rounded-2xl max-h-[70vh]" : "rounded-xl md:rounded-2xl"
       }`}
     >
+      {/* 🛑 العنصر السحري المضاف: فيديو حقيقي مخفي خلف الواجهة لتمكين الـ Fullscreen للموبايل */}
+      <video
+        ref={videoRef}
+        playsInline
+        className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none"
+        src="https://www.w3schools.com/html/mov_bbb.mp4" // يمكنك استبداله برابط الفيديو الخاص بك
+      />
+ 
       {/* Video Placeholder State Container */}
       <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center pointer-events-none">
         <div className="text-center">
@@ -183,6 +171,9 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
         onClick={(e) => {
           e.stopPropagation();
           setIsPlaying(!isPlaying);
+          if (videoRef.current) {
+            isPlaying ? videoRef.current.pause() : videoRef.current.play().catch(() => {});
+          }
         }}
         className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 z-10 ${
           showMobileControls ? "opacity-100" : "opacity-0 md:group-hover:opacity-100"
@@ -210,6 +201,9 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
               onClick={(e) => {
                 e.stopPropagation();
                 setIsPlaying(!isPlaying);
+                if (videoRef.current) {
+                  isPlaying ? videoRef.current.pause() : videoRef.current.play().catch(() => {});
+                }
               }}
               className="hover:text-indigo-300 p-1"
             >
@@ -276,4 +270,3 @@ export default function VideoPlayer({ lessonTitle = "Current Lesson", isWideMode
     </div>
   );
 }
- 
